@@ -1,5 +1,6 @@
 import polars as pl
 import pandas as pd
+import numpy as np
 import os
 from pathlib import Path
 from fastavro import reader
@@ -32,15 +33,19 @@ class Events:
                 pl.col('percentage').cast(float),
                 pl.col('timestamp').cast(float)
             )
-            
+
             if 'time_spent' in self.dataframe.columns:
                 self.dataframe = self.dataframe.with_columns(
                     pl.col('time_spent').cast(float)
                 )
             
+            day_column = pd.to_datetime(self.dataframe['timestamp'], unit='s')
             self.dataframe = self.dataframe.with_columns(
-            pl.col("timestamp").cast(pl.Datetime).dt.date().alias('day')
+                pl.from_pandas(day_column).dt.date().alias('day')
             )
+            #self.dataframe = self.dataframe.with_columns(
+             #  (pl.col("timestamp") / 1000).cast(pl.Date).alias('day')
+            #)
             self.__add_author_unit()
             self.dataframe = self.dataframe.sort(by=pl.col('timestamp'))
 
