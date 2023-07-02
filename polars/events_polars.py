@@ -8,14 +8,13 @@ import json
 import datetime as dt
 
 
-
-
-BACKUP_INTERMEDIATE_CONTAINER_NAME = 'capture_processed'
-MAX_EVENTS = 1000 
+BACKUP_INTERMEDIATE_CONTAINER_NAME = "capture_processed"
+MAX_EVENTS = 1000
 
 
 class Events:
-    def __init__(self, capture, capture_processed, after=""):
+    # es importante que por defecto capture processed sea None
+    def __init__(self, capture, capture_processed=None, after=""):
         # En lugar de contenedores, hay que definir carpetas
         self.__retrieve_events(capture, capture_processed, after)
 
@@ -25,88 +24,87 @@ class Events:
         if self.dataframe.shape[0] > 0:
             # In some old events avro, problem: we drop them
             # Filtramos las filas del df, luego usamos drop para eliminarlas
-            self.dataframe = self.dataframe.filter(pl.col('percentage') != '')  # hay que quitarlo
-            self.dataframe = self.dataframe.select([
-                col for col in self.dataframe.columns if col not in ['_id', 'state']
-            ])
+            self.dataframe = self.dataframe.filter(
+                pl.col("percentage") != ""
+            )  # hay que quitarlo
+            self.dataframe = self.dataframe.select(
+                [col for col in self.dataframe.columns if col not in ["_id", "state"]]
+            )
             self.dataframe = self.dataframe.with_columns(
-                pl.col('percentage').cast(float),
-                pl.col('timestamp').cast(float)
+                pl.col("percentage").cast(float), pl.col("timestamp").cast(float)
             )
 
-            if 'time_spent' in self.dataframe.columns:
+            if "time_spent" in self.dataframe.columns:
                 self.dataframe = self.dataframe.with_columns(
-                    pl.col('time_spent').cast(float)
+                    pl.col("time_spent").cast(float)
                 )
-            
-            day_column = pd.to_datetime(self.dataframe['timestamp'], unit='s')
-            self.dataframe = self.dataframe.with_columns(
-                pl.from_pandas(day_column).dt.date().alias('day')
-            )
-            #self.dataframe = self.dataframe.with_columns(
-             #  (pl.col("timestamp") / 1000).cast(pl.Date).alias('day')
-            #)
-            self.__add_author_unit()
-            self.dataframe = self.dataframe.sort(by=pl.col('timestamp'))
 
-    def __retrieve_events(self, capture, capture_processed, after=''):
-        patron = '**/*.avro'
+            self.dataframe = self.dataframe.with_columns(
+                (pl.col("timestamp") * 1000)
+                .cast(pl.Datetime)
+                .dt.with_time_unit("ms")
+                .dt.strftime("%Y/%m/%d %H:%M:%S")
+                .alias("datetime_string")
+            )
+            self.__add_author_unit()
+            self.dataframe = self.dataframe.sort(by=pl.col("timestamp"))
+
+    def __retrieve_events(self, capture, capture_processed, after=""):
+        patron = "**/*.avro"
         file_avro = capture.glob(patron)
-        file_list = [
-            file for file in file_avro if file > after
-        ]
-        
+        file_list = [file for file in file_avro if file.name > after]
+
         file_list.sort()
         print(file_list)
 
         if len(file_list) > 0:
             self.batch_first_events_file = file_list[0]
-        
+
         else:
             self.batch_first_events_file, self.batch_last_events_file = (None, None)
 
         self.__events = []
         events_number = 0
-
         for index, file_path in enumerate(file_list):
+            # hay que usar pathlib, no os.Path
             file_name = os.path.basename(file_path)
 
             if os.path.getsize(file_path) > 0:
-                with open(file_path, 'rb') as f:
-                 events_list = self.__process_file(f)
+                with open(file_path, "rb") as f:
+                    events_list = self.__process_file(f)
+                    events_number += len(events_list)
 
-                 events_number += len(events_list)
-
-                if (events_number > MAX_EVENTS and index > 1):
+                if events_number > MAX_EVENTS and index > 1:
                     break
 
                 self.batch_last_events_file = file_name
                 self.__events += events_list
 
                 if capture_processed is not None:
+                    # hay que usar pathlib, no os.path
                     bin_file_path = os.path.join(capture_processed, file_name)
                     os.rename(file_path, bin_file_path)
+                    # da error si capture processes is None
+                    # hay que borrar file path, no bin_file_path
+                    os.remove(bin_file_path)
 
-                os.remove(bin_file_path)
-                
         print(f"Number of downloaded events: {len(self.__events)}")
 
-
     def __process_file(self, file_name):
-        
-            events_list = []
 
-            avro_reader = reader(file_name)
+        events_list = []
 
-            for reading in avro_reader:
-                parsed_json = json.loads(reading["Body"])
+        avro_reader = reader(file_name)
 
-                events_list.append(parsed_json)
+        for reading in avro_reader:
+            parsed_json = json.loads(reading["Body"])
 
-            return events_list
+            events_list.append(parsed_json)
+
+        return events_list
 
     def upload_metadata(self):
-        #self.__upload_metadata( # "events_metadata.avro",)
+        # self.__upload_metadata( # "events_metadata.avro",)
         self.__upload_metadata("events_metadata.json")
 
     def __upload_metadata(self, container_name, path, schema):
@@ -115,32 +113,33 @@ class Events:
             "batch_last_events_file": self.batch_last_events_file,
         }
 
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(metadata, f)
 
     def add_unit_type(self):
         if self.dataframe.shape[0] == 0:
             return None
 
-        evaluation_units_urls = ["ed12ad9791554f32b3327671030c0e5e"] 
+        evaluation_units_urls = ["ed12ad9791554f32b3327671030c0e5e"]
 
         if not pl.col("unit_type") in self.dataframe.columns:
             self.dataframe = self.dataframe.with_columns(
-        pl.col("unit_type").fill_nan("Content")
-    )
+                pl.col("unit_type").fill_nan("Content")
+            )
         else:
             self.dataframe = self.dataframe.with_columns(
-            pl.when(pl.col("unit_type").is_null())
-            .then("Content")
+                pl.when(pl.col("unit_type").is_null())
+                .then("Content")
+                .otherwise(pl.col("unit_type"))
+                .alias("unit_type")
+            )
+        self.dataframe = self.dataframe.with_columns(
+            pl.when(self.dataframe["url"] == pl.lit(evaluation_units_urls[0]))
+            .then(pl.lit("Evaluation"))
             .otherwise(pl.col("unit_type"))
             .alias("unit_type")
-    )
-        self.dataframe = self.dataframe.with_columns(
-            pl.when(
-                self.dataframe["url"] == pl.lit(evaluation_units_urls[0])).then(
-                pl.lit("Evaluation")
-        ).otherwise(pl.col("unit_type")).alias('unit_type')
-    )
+        )
+
     def __add_author_unit(self):
         # Estas tres líneas son iguales
         if self.dataframe.shape[0] > 0:
@@ -148,17 +147,22 @@ class Events:
             url_author = urls.str.contains("/") & (urls != "/la/")
 
             if url_author.any():
-                # authors = pl.Series(["anonymous"] * len(urls), dtype=pl.Object) 
-
+                # authors = pl.Series(["anonymous"] * len(urls), dtype=pl.Object)
 
                 self.dataframe = self.dataframe.with_columns(
-                    pl.when(url_author).then(urls.str.split("/").apply(lambda s: s[1] if len(s) > 1 else ''))
-                    .otherwise('anonymous')
+                    pl.when(url_author)
+                    .then(
+                        urls.str.split("/").apply(lambda s: s[1] if len(s) > 1 else "")
+                    )
+                    .otherwise("anonymous")
                     .alias("author"),
-                    pl.when(url_author).then(urls.str.split("/").apply(lambda s: s[2] if len(s) > 2 else ''))
+                    pl.when(url_author)
+                    .then(
+                        urls.str.split("/").apply(lambda s: s[2] if len(s) > 2 else "")
+                    )
                     .otherwise(urls)
-                    .alias("unit")
-            )
+                    .alias("unit"),
+                )
 
         else:
             self.dataframe = self.dataframe.with_columns("author", "anonymous")
@@ -166,10 +170,10 @@ class Events:
 
 
 # ejemplo de carga de eventos, instanciando un objeto de la clase Events que hemos definido en este fichero.
-if __name__ == '__main__':
-    eventsla =  Events(
-         Path('capture'),
-         Path('capture_processed'), 
-         after=Path('/upctevents/devevents/0/2023/06/16/07/00/00.avro')
-)
-print(eventsla.dataframe)  
+if __name__ == "__main__":
+    eventsla = Events(
+        Path("..", "capture"),
+        #  Path('capture_processed'),
+        #  after=Path('/upctevents/devevents/0/2023/06/16/07/00/00.avro')
+    )
+print(eventsla.dataframe)
