@@ -1,7 +1,6 @@
 import polars as pl
 import pandas as pd
 import numpy as np
-import os
 from pathlib import Path
 from fastavro import reader
 import json
@@ -40,16 +39,16 @@ class Events:
                 (pl.col("timestamp") * 1000) 
                 .cast(pl.Datetime)
                 .dt.with_time_unit("ms")
-                .dt.strftime("%Y/%m/%d %H:%M:%S")
-                .alias("datetime_string")
+                .dt.strftime("%Y/%m/%d")
+                .alias("datetime")
             )
             self.__add_author_unit()
             self.dataframe = self.dataframe.sort(by=pl.col("timestamp"))
 
     def __retrieve_events(self, capture, capture_processed, after=""):
-        patron = "**/*.avro"
-        file_avro = capture.glob(patron)
-        file_list = [file for file in file_avro if file > after]
+        file_list = [
+            file for file in capture.glob("**/*.avro") if file.as_posix() > after
+        ]
         
         file_list.sort()
         print(file_list)
@@ -64,10 +63,9 @@ class Events:
         events_number = 0
 
         for index, file_path in enumerate(file_list):
-            filepath = Path(file_path)
-            file_name = filepath.name
-
-            if filepath.stat().st_size > 0:
+            file_name = file_path.name
+            
+            if file_path.stat().st_size > 0:
                 with open(file_path, "rb") as f:
                     events_list = self.__process_file(f)
                     events_number += len(events_list)
@@ -79,9 +77,9 @@ class Events:
                 self.__events += events_list
 
                 if capture_processed is not None:
-                    bin_file_path = Path(capture_processed / file_name)
-                    filepath.rename(bin_file_path)                
-                bin_file_path.unlink()
+                    bin_file_path = capture_processed / file_name
+                    file_path.rename(bin_file_path)                
+                    bin_file_path.unlink()
                 
         print(f"Number of downloaded events: {len(self.__events)}")
 
@@ -166,6 +164,6 @@ if __name__ == "__main__":
     eventsla =  Events(
          Path("capture"),
          Path("capture_processed"), 
-         after=Path("/upctevents/devevents/0/2023/06/16/07/00/00.avro")
+         after="/upctevents/upctforma/0/2023/06/17/14/56/43.avro"
 )
 print(eventsla.dataframe)  
