@@ -1,6 +1,7 @@
 import polars as pl
 import pandas as pd
 import numpy as np
+import shutil
 from pathlib import Path
 from fastavro import reader
 import json
@@ -39,8 +40,8 @@ class Events:
                 (pl.col("timestamp") * 1000) 
                 .cast(pl.Datetime)
                 .dt.with_time_unit("ms")
-                .dt.strftime("%Y/%m/%d")
-                .alias("datetime")
+                .dt.strftime("%d")
+                .alias("day")
             )
             self.__add_author_unit()
             self.dataframe = self.dataframe.sort(by=pl.col("timestamp"))
@@ -51,7 +52,7 @@ class Events:
         ]
         
         file_list.sort()
-        print(file_list)
+        # print(file_list)
 
         if len(file_list) > 0:
             self.batch_first_events_file = file_list[0]
@@ -78,8 +79,13 @@ class Events:
 
                 if capture_processed is not None:
                     bin_file_path = capture_processed / file_name
-                    file_path.rename(bin_file_path)                
+                    file_path.rename(bin_file_path) 
+                    # Eliminamos el archivo y la carpeta padre              
                     bin_file_path.unlink()
+                    parent_directory = file_path.parent
+                    # Verificar si la carpeta está vacía antes de eliminarla
+                    if not any(parent_directory.iterdir()):
+                        shutil.rmtree(parent_directory)
                 
         print(f"Number of downloaded events: {len(self.__events)}")
 
