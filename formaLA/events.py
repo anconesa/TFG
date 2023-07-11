@@ -1,17 +1,17 @@
 import pandas as pd
-import os
 from pathlib import Path
-from fastavro import reader, writer, parse_schema
+from fastavro import reader
 import json
-import time
+import timeit
+import shutil
 
 
-BACKUP_INTERMEDIATE_CONTAINER_NAME = 'capture_processed'
+BACKUP_INTERMEDIATE_CONTAINER_NAME = "capture_processed"
 MAX_EVENTS = 1000 
 
 
 class Events:
-    def __init__(self, capture, capture_processed, after=""):
+    def __init__(self, capture, capture_processed=None, after=""):
         # en lugar de contenedores, hay que definir carpetas
         self.__retrieve_events(capture, capture_processed, after)
 
@@ -21,9 +21,12 @@ class Events:
         if self.dataframe.shape[0] > 0:
             # In some old events avro, problem: we drop them
             self.dataframe.drop(
-                index=self.dataframe.index[self.dataframe["percentage"] == ""], inplace=True
+                index=self.dataframe.index[self.dataframe["percentage"] == ""], 
+                inplace=True
             )  # hay que quitarlo
-            self.dataframe.drop(columns=["_id", "state"], inplace=True, errors="ignore")
+            self.dataframe.drop(
+                columns=["_id", "state"], inplace=True, 
+                errors="ignore")
             self.dataframe = self.dataframe.astype(
                 {
                     "percentage": float,
@@ -39,14 +42,12 @@ class Events:
             self.dataframe.sort_values(["timestamp"], inplace=True)
 
     def __retrieve_events(self, capture, capture_processed, after=''):
-        patron = '**/*.avro'
-        file_avro = capture.glob(patron)
         file_list = [
-            file for file in file_avro if file > after
+            file for file in capture.glob("**/*.avro") if file.as_posix() > after
         ]
         
         file_list.sort()
-        print(file_list)
+        # print(file_list)
 
         if len(file_list) > 0:
             self.batch_first_events_file = file_list[0]
@@ -58,25 +59,29 @@ class Events:
         events_number = 0
 
         for index, file_path in enumerate(file_list):
-            file_name = os.path.basename(file_path)
+            file_name = file_path.name
 
-            if os.path.getsize(file_path) > 0:
-                with open(file_path, 'rb') as f:
+            if file_path.stat().st_size > 0:
+                with open(file_path, "rb") as f:
                  events_list = self.__process_file(f)
 
                  events_number += len(events_list)
 
-                if (events_number > MAX_EVENTS and index > 1):
+                if events_number > MAX_EVENTS and index > 1:
                     break
 
                 self.batch_last_events_file = file_name
                 self.__events += events_list
 
                 if capture_processed is not None:
-                    bin_file_path = os.path.join(capture_processed, file_name)
-                    os.rename(file_path, bin_file_path)
-
-                os.remove(bin_file_path)
+                    bin_file_path = capture_processed / file_name
+                    file_path.rename(bin_file_path) 
+                    # Eliminamos el archivo y la carpeta padre 
+                    bin_file_path.unlink()
+                    parent_directory = file_path.parent
+                    # Verificar si la carpeta está vacía antes de eliminarla
+                    if not any(parent_directory.iterdir()):
+                        shutil.rmtree(parent_directory)
                 
         print(f"Number of downloaded events: {len(self.__events)}")
 
@@ -104,7 +109,7 @@ class Events:
             "batch_last_events_file": self.batch_last_events_file,
         }
 
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(metadata, f)
 
     def add_unit_type(self):
@@ -145,12 +150,21 @@ class Events:
                 self.dataframe["author"] = "anonymous"
                 self.dataframe["unit"] = self.dataframe["url"]
 
-
 # ejemplo de carga de eventos, instanciando un objeto de la clase Events que hemos definido en este fichero.
-if __name__ == '__main__':
+if __name__ == "__main__":
     eventsla =  Events(
-         Path('capture'),
-         Path('capture_processed'), 
-         after=Path('/upctevents/devevents/0/2023/06/16/07/00/00.avro')
+        Path("capture"),
+        Path("capture_processed"), 
+        after="/upctevents/upctforma/0/2023/06/14/03/41/43.avro"
 )
 print(eventsla.dataframe)  
+
+def measure_events():
+    """Función empleada para usar timeit y evaluar el tiempo de ejecución"""
+    eventsla = Events(
+        Path("capture"), 
+        Path("capture_processed"), 
+        after="/upctevents/upctforma/0/2023/06/14/03/41/43.avro"
+)
+tiempo = timeit.timeit(measure_events, number=25)
+print(f"Tiempo de ejecución de eventsla: {tiempo} segundos")

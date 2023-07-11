@@ -1,10 +1,9 @@
 import polars as pl
-import pandas as pd
-import numpy as np
 import shutil
 from pathlib import Path
 from fastavro import reader
 import json
+import timeit
 import datetime as dt
 
 BACKUP_INTERMEDIATE_CONTAINER_NAME = "capture_processed"
@@ -173,3 +172,13 @@ if __name__ == "__main__":
          after="/upctevents/upctforma/0/2023/06/17/14/56/43.avro"
 )
 print(eventsla.dataframe)  
+
+def measure_events():
+    """Función empleada para usar timeit y evaluar el tiempo de ejecución"""
+    eventsla = Events(
+        Path("capture"), 
+        Path("capture_processed"), 
+        after="/upctevents/upctforma/0/2023/06/14/03/41/43.avro"
+)
+tiempo = timeit.timeit(measure_events, number=25)
+print(f"Tiempo de ejecución de eventsla: {tiempo} segundos")
