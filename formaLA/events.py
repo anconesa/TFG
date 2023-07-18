@@ -73,15 +73,15 @@ class Events:
                 self.batch_last_events_file = file_name
                 self.__events += events_list
 
-                if capture_processed is not None:
-                    bin_file_path = capture_processed / file_name
-                    file_path.rename(bin_file_path) 
+               # if capture_processed is not None:
+                #    bin_file_path = capture_processed / file_name
+                 #   file_path.rename(bin_file_path) 
                     # Eliminamos el archivo y la carpeta padre 
-                    bin_file_path.unlink()
-                    parent_directory = file_path.parent
+                   # bin_file_path.unlink()
+                  #  parent_directory = file_path.parent
                     # Verificar si la carpeta está vacía antes de eliminarla
-                    if not any(parent_directory.iterdir()):
-                        shutil.rmtree(parent_directory)
+                    #if not any(parent_directory.iterdir()):
+                      #  shutil.rmtree(parent_directory)
                 
         print(f"Number of downloaded events: {len(self.__events)}")
 
@@ -166,5 +166,5 @@ def measure_events():
         Path("capture_processed"), 
         after="/upctevents/upctforma/0/2023/06/14/03/41/43.avro"
 )
-tiempo = timeit.timeit(measure_events, number=25)
+tiempo = timeit.timeit(measure_events, number=500)
 print(f"Tiempo de ejecución de eventsla: {tiempo} segundos")
