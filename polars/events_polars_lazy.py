@@ -9,74 +9,80 @@ from dotenv import load_dotenv
 import datetime as dt
 from container import Container
 
-BACKUP_INTERMEDIATE_CONTAINER_NAME = "capture_processed"
+
+# CTE
 MAX_EVENTS = 100000
+
 
 class Events:
     def __init__(self, events_container, bin_container=None, after=""):
         # En lugar de contenedores, hay que definir carpetas
         download_start_time = time.time()
         self.__retrieve_events(events_container, bin_container, after)
-
         # como resultado de lo anterior, se ha completado el atributo __events de self.
         download_end_time = time.time()
         download_time = download_end_time - download_start_time
         processing_start_time = time.time() 
-        self.dataframe = pl.DataFrame(self.__events)
+        self.dataframe = pl.DataFrame(self.__events).lazy()
 
-        if self.dataframe.shape[0] > 0:
+        if len(self.dataframe.collect()) > 0:
             # In some old events avro, problem: we drop them
             # Filtramos las filas del df, luego usamos drop para eliminarlas
-            self.dataframe = self.dataframe.filter(
-                pl.col("percentage") != ""
-            )  # hay que quitarlo
-            self.dataframe = self.dataframe.select(
-                [col for col in self.dataframe.columns if col not in ["_id", "state"]]
+            self.dataframe = (
+            self.dataframe
+            .filter(pl.col("percentage") != "")
+            .select([col for col in self.dataframe.columns if col not in ["_id", "state"]])
+            .with_columns(
+                pl.col("percentage").cast(float),
+                pl.col("timestamp").cast(float),
             )
-            self.dataframe = self.dataframe.with_columns(
-                pl.col("percentage").cast(float), pl.col("timestamp").cast(float)
-            )
+            .lazy()
+        )
 
             if "time_spent" in self.dataframe.columns:
                 self.dataframe = self.dataframe.with_columns(
                     pl.col("time_spent").cast(float)
                 )
 
-            self.dataframe = self.dataframe.with_columns(
+            self.dataframe = (
+            self.dataframe.with_columns(
                 (pl.col("timestamp") * 1000) 
                 .cast(pl.Datetime)
                 .dt.with_time_unit("ms")
                 .dt.strftime("%d")
                 .alias("day")
             )
-            self.__add_author_unit()
-            self.dataframe = self.dataframe.sort(by=pl.col("timestamp"))
-            processing_end_time = time.time()
-            processing_time = processing_end_time - processing_start_time
-            total_time = download_time + processing_time
-            print(f"Tiempo de descarga de archivos: {download_time} segundos")
-            print(f"Tiempo de procesado (excluyendo descarga de archivos): {processing_time} segundos")
-            print(f"Tiempo total (incluyendo descarga de archivos): {total_time} segundos")
+            
+            .sort(by=pl.col("timestamp"))
+            .lazy()
+        )
+        self.__add_author_unit()
+        processing_end_time = time.time()
+        processing_time = processing_end_time - processing_start_time
+        total_time = download_time + processing_time
+        print(f"Tiempo de descarga de archivos: {download_time} segundos")
+        print(f"Tiempo de procesado (excluyendo descarga de archivos): {processing_time} segundos")
+        print(f"Tiempo total (incluyendo descarga de archivos): {total_time} segundos")
 
 
-    def __retrieve_events(self, events_container, bin_container, after=""):
-        blob_list = [
+    def __retrieve_events(self, events_container, bin_container=None, after=""):
+        blob_generator = (
             blob for blob in events_container.container.list_blobs() if blob.name > after
-        ]
-        
-        blob_list.sort(key=lambda b: b.name)
+        )
+
+        # file_list.sort()
         # print(file_list)
 
-        if len(blob_list) > 0:
-            self.batch_first_events_file = blob_list[0]
+        # if len(file_list) > 0:
+         #   self.batch_first_events_file = file_list[0]
         
-        else:
-            self.batch_first_events_file, self.batch_last_events_file = (None, None)
+        #else:
+        self.batch_first_events_file, self.batch_last_events_file = (None, None)
 
         self.__events = []
         events_number = 0
 
-        for index, blob in enumerate(blob_list):
+        for index, blob in enumerate(blob_generator):
             if blob.size > 508:
                 blob_client = ContainerClient.get_blob_client(
                     events_container.container, blob=blob.name
@@ -88,6 +94,7 @@ class Events:
                 if (events_number > MAX_EVENTS) & (index > 1):
                     break
 
+                self.batch_firts_events_file = self.batch_first_events_file or blob.name
                 self.batch_last_events_file = blob.name
                 self.__events += events_list
 
@@ -103,6 +110,7 @@ class Events:
         if bin_container is not None:
             bin_container.container.close()
 
+                
 
     def __process_blob(self, filename):
         with io.BytesIO(filename) as f:
@@ -143,17 +151,17 @@ class Events:
         evaluation_units_urls = ["ed12ad9791554f32b3327671030c0e5e"] 
 
         if not pl.col("unit_type") in self.dataframe.columns:
-            self.dataframe = self.dataframe.with_columns(
+            self.dataframe = self.dataframe.lazy().with_columns(
                 pl.col("unit_type").fill_nan("Content")
     )
         else:
-            self.dataframe = self.dataframe.with_columns(
+            self.dataframe = self.dataframe.lazy().with_columns(
                 pl.when(pl.col("unit_type").is_null())
                 .then("Content")
                 .otherwise(pl.col("unit_type"))
                 .alias("unit_type")
     )
-        self.dataframe = self.dataframe.with_columns(
+        self.dataframe = self.dataframe.lazy().with_columns(
             pl.when(
             self.dataframe["url"] == pl.lit(evaluation_units_urls[0]))
             .then(pl.lit("Evaluation"))
@@ -161,31 +169,54 @@ class Events:
             .alias('unit_type')
     )
     def __add_author_unit(self):
-        if self.dataframe.shape[0] > 0:
-            urls = self.dataframe["url"]
-            url_author = urls.str.contains("/") & (urls != "/la/")
+        if len(self.dataframe.collect()) > 0:
+            urls = self.dataframe.select(pl.col("url"))
+            url_author = self.dataframe.filter(
+                (pl.col("url").str.contains("/")) & (pl.col("url") != "/la/")
+            ).collect()
 
-            if url_author.any():
-                # authors = pl.Series(["anonymous"] * len(urls), dtype=pl.Object) 
-
-                self.dataframe = self.dataframe.with_columns(
-                    pl.when(url_author)
+            if not url_author.is_empty():
+            # authors = pl.Series(["anonymous"] * len(urls), dtype=pl.Object) 
+            # Agregamos la columna "author" en función de los valores de "url"
+                self.dataframe = (
+                self.dataframe.lazy()
+                .with_columns(
+                    pl.when(
+                        (pl.col("url").str.contains("/"))
+                        & (pl.col("url") != "/la/")
+                    )
                     .then(
-                        urls.str.split("/").apply(lambda s: s[1] if len(s) > 1 else "")
+                        pl.col("url").str.split("/").apply(lambda s: s[1] if len(s) > 1 else "")
                     )
                     .otherwise("anonymous")
                     .alias("author"),
-                    pl.when(url_author)
-                    .then(
-                        urls.str.split("/").apply(lambda s: s[2] if len(s) > 2 else "")
-                    )
-                    .otherwise(urls)
-                    .alias("unit")
+                )
+                .lazy()
             )
-                
+
+            # Agregamos la columna "unit" en función de los valores de "url"
+            self.dataframe = (
+                self.dataframe.lazy()
+                .with_columns(
+                    pl.when(
+                        (pl.col("url").str.contains("/"))
+                        & (pl.col("url") != "/la/")
+                    )
+                    .then(
+                        pl.col("url").str.split("/").apply(lambda s: s[2] if len(s) > 2 else "")
+                    )
+                    .otherwise(pl.col("url"))
+                    .alias("unit"),
+                )
+                .lazy()
+            )
         else:
-            self.dataframe = self.dataframe.with_columns("author", "anonymous")
-            self.dataframe = self.dataframe.with_columns("unit", self.dataframe["url"])
+             self.dataframe = (
+                self.dataframe.lazy()
+                .with_columns("author", "anonymous")
+                .with_columns("unit", self.dataframe["url"])
+                .lazy()
+        )
 
 
 load_dotenv()
@@ -197,7 +228,16 @@ capture_container = Container("capture", anabel_storage_connection_str)
 if __name__ == "__main__":
     eventsla =  Events(
         capture_container, 
-        after="upctevents/upctforma/0/2023/06/01/00/00/00.avro"
+         after="upctevents/upctforma/0/2023/06/01/00/00/00.avro"
 )
-print(eventsla.dataframe)  
+print(eventsla.dataframe.collect())  
 
+#def measure_events():
+#    """Función empleada para usar timeit y evaluar el tiempo de ejecución"""
+#    eventsla = Events(
+#        "capture", 
+#        "capture_processed", 
+#        after="/upctevents/upctforma/0/2023/06/14/03/41/43.avro"
+#)
+#tiempo = timeit.timeit(measure_events, number=500)
+#print(f"Tiempo de ejecución de eventsla: {tiempo} segundos")
