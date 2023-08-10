@@ -8,9 +8,10 @@ import time
 from dotenv import load_dotenv
 import datetime as dt
 from container import Container
+import timeit
 
 
-BACKUP_INTERMEDIATE_CONTAINER_NAME = "capture_processed"
+
 MAX_EVENTS = 100000 
 
 
@@ -55,6 +56,7 @@ class Events:
             print(f"Tiempo de procesado (excluyendo descarga de archivos): {processing_time} segundos")
             print(f"Tiempo total (incluyendo descarga de archivos): {total_time} segundos")
 
+    
     def __retrieve_events(self, events_container, bin_container, after=''):
         blob_list = [
             blob for blob in events_container.container.list_blobs() if blob.name > after
@@ -175,7 +177,7 @@ class Events:
 load_dotenv()
 anabel_storage_connection_str = os.environ["ANABEL_STORAGE_CONNECTION_STR"]
 capture_container = Container("capture", anabel_storage_connection_str)
-# print(capture_container.list_blobs())
+#print(capture_container.list_blobs())
 
 # ejemplo de carga de eventos, instanciando un objeto de la clase Events que hemos definido en este fichero.
 if __name__ == "__main__":
@@ -185,12 +187,3 @@ if __name__ == "__main__":
 )
 print(eventsla.dataframe)  
 
-#def measure_events():
-#    """Función empleada para usar timeit y evaluar el tiempo de ejecución"""
-#    eventsla = Events(
-#        Path("capture"), 
-#        Path("capture_processed"), 
-#        after="/upctevents/upctforma/0/2023/06/14/03/41/43.avro"
-#)
-#tiempo = timeit.timeit(measure_events, number=500)
-#print(f"Tiempo de ejecución de eventsla: {tiempo} segundos")
